@@ -1,0 +1,85 @@
+localized text API localized text，localized text API localized text。
+
+localized text：
+1) localized text，localized text。
+2) localized text。
+3) localized text；localized text。
+
+localized text：
+1) localized text：saveModelTemplate
+2) localized text：saveModelTemplates（localized text）
+3) compatMediaTemplate localized text JSON localized text，localized text JSON localized text
+4) localized text，localized text submit/query localized text
+
+localized text：
+{
+  "version": 1,
+  "mediaType": "image" | "video",
+  "mode": "sync" | "async",
+  "create": { "method": "...", "path": "...", "contentType"?: "...", "bodyTemplate"?: {}, "multipartFileFields"?: ["..."] },
+  "status"?: { "method": "...", "path": "..." },
+  "content"?: { "method": "...", "path": "..." },
+  "response": {
+    "taskIdPath"?: "$....",
+    "statusPath"?: "$....",
+    "outputUrlPath"?: "$....",
+    "outputUrlsPath"?: "$....",
+    "errorPath"?: "$...."
+  },
+  "polling"?: {
+    "intervalMs": 5000,
+    "timeoutMs": 600000,
+    "doneStates": ["completed"],
+    "failStates": ["failed", "error"]
+  }
+}
+
+localized text：
+1) version localized text 1
+2) mediaType localized text image/video
+3) mode localized text sync/async
+4) create.path localized text
+5) create.method localized text POST/PUT/PATCH localized text create.bodyTemplate localized text
+6) mode=async localized text status.path localized text，localized text {{task_id}}
+7) mode=async localized text response.taskIdPath、response.statusPath、polling localized text
+8) mode=sync localized text response.outputUrlPath localized text response.outputUrlsPath localized text
+9) JSONPath localized text $. localized text
+10) localized text contentType=multipart/form-data localized text multipartFileFields；localized text multipartFileFields localized text bodyTemplate localized text
+
+localized text（localized text）：
+1) modelId（localized text）
+2) name（localized text；localized text modelId）
+3) type（image/video）
+4) create endpoint（method + path + body localized text）
+5) async localized text status endpoint（method + path，localized text path localized text {{task_id}}）
+6) async localized text taskIdPath、statusPath、polling.doneStates、polling.failStates
+7) localized text create.contentType localized text multipart/form-data，localized text，localized text multipartFileFields
+8) sync localized text outputUrlPath localized text outputUrlsPath
+
+localized text：
+1) localized text taskIdPath/statusPath/outputUrlPath
+2) localized text polling.doneStates/failStates
+3) localized text，localized text
+4) localized text create.contentType localized text，localized text application/json localized text multipart/form-data
+
+video create bodyTemplate localized text（localized text）：
+{
+  "model": "{{model}}",
+  "prompt": "{{prompt}}",
+  "seconds": "{{duration}}",
+  "size": "{{size}}",
+  "input_reference": "{{image}}"
+}
+
+path localized text（localized text）：
+1) localized text URL，localized text
+2) localized text，localized text，localized text /v1、/v2 localized text
+3) localized text
+
+localized text：
+1) localized text，localized text <think>
+2) localized textVietnameselocalized text，localized text
+3) localized text，localized text
+4) localized text invalid localized text，localized text issues localized text，localized text
+
+localized text providerId={{providerId}}

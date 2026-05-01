@@ -1,0 +1,296 @@
+'use client'
+
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { logInfo as _ulogInfo, logWarn as _ulogWarn, logError as _ulogError } from '@/lib/logging/core'
+import { detectEpisodeMarkers, type EpisodeMarkerResult } from '@/lib/episode-marker-detector'
+import { countWords } from '@/lib/word-count'
+import {
+  useListProjectEpisodes,
+  useSaveProjectEpisodesBatch,
+  useSplitProjectEpisodes,
+  useSplitProjectEpisodesByMarkers,
+} from '@/lib/query/hooks'
+import type { DeleteConfirmState, SplitEpisode, WizardStage } from '../types'
+
+type TranslateValues = Record<string, string | number | Date>
+type Translate = (key: string, values?: TranslateValues) => string
+
+interface UseWizardStateParams {
+  projectId: string
+  importStatus?: string | null
+  onImportComplete: (episodes: SplitEpisode[], triggerGlobalAnalysis?: boolean) => void
+  t: Translate
+  /** localized text：localized text */
+  initialRawContent?: string
+}
+
+export function useWizardState({ projectId, importStatus, onImportComplete, t, initialRawContent }: UseWizardStateParams) {
+  const initialStage: WizardStage = importStatus === 'pending' ? 'preview' : 'select'
+  const [stage, setStage] = useState<WizardStage>(initialStage)
+  const [rawContent, setRawContent] = useState(initialRawContent || '')
+  const [episodes, setEpisodes] = useState<SplitEpisode[]>([])
+  const [selectedEpisode, setSelectedEpisode] = useState(0)
+  const [error, setError] = useState<string | null>(null)
+  const [deleteConfirm, setDeleteConfirm] = useState<DeleteConfirmState>({ show: false, index: -1, title: '' })
+  const [markerResult, setMarkerResult] = useState<EpisodeMarkerResult | null>(null)
+  const [showMarkerConfirm, setShowMarkerConfirm] = useState(false)
+  const [saving, setSaving] = useState(false)
+
+  const listProjectEpisodesMutation = useListProjectEpisodes(projectId)
+  const splitProjectEpisodesMutation = useSplitProjectEpisodes(projectId)
+  const splitProjectEpisodesByMarkersMutation = useSplitProjectEpisodesByMarkers(projectId)
+  const saveProjectEpisodesBatchMutation = useSaveProjectEpisodesBatch(projectId)
+
+  const loadSavedEpisodes = useCallback(async () => {
+    try {
+      const data = await listProjectEpisodesMutation.mutateAsync()
+      if (data.episodes && data.episodes.length > 0) {
+        const loadedEpisodes: SplitEpisode[] = data.episodes.map((ep: { episodeNumber?: number; name?: string; description?: string; novelText?: string }, idx: number) => ({
+          number: ep.episodeNumber || idx + 1,
+          title: ep.name || t('episode', { num: idx + 1 }),
+          summary: ep.description || '',
+          content: ep.novelText || '',
+          wordCount: countWords(ep.novelText || ''),
+        }))
+        setEpisodes(loadedEpisodes)
+        setStage('preview')
+      }
+    } catch (err) {
+      _ulogError('[SmartImport] localized text:', err)
+    }
+  }, [listProjectEpisodesMutation, t])
+
+  useEffect(() => {
+    if (importStatus === 'pending' && episodes.length === 0) {
+      void loadSavedEpisodes()
+    }
+  }, [episodes.length, importStatus, loadSavedEpisodes])
+
+
+  const performAISplit = useCallback(async () => {
+    setShowMarkerConfirm(false)
+    setStage('analyzing')
+    setError(null)
+
+    try {
+      _ulogInfo('[SmartImport] localized text split API...')
+      const data = await splitProjectEpisodesMutation.mutateAsync({ content: rawContent, async: true })
+      const splitEpisodes = data.episodes || []
+      setEpisodes(splitEpisodes)
+
+      let saveSucceeded = true
+      try {
+        await saveProjectEpisodesBatchMutation.mutateAsync({
+          episodes: splitEpisodes.map((ep: SplitEpisode) => ({
+            name: ep.title,
+            description: ep.summary,
+            novelText: ep.content,
+          })),
+          clearExisting: true,
+          importStatus: 'pending',
+        })
+      } catch {
+        saveSucceeded = false
+        _ulogWarn('[SmartImport] localized text，localized text')
+      }
+      if (saveSucceeded) {
+        _ulogInfo('[SmartImport] localized text，localized text：pending')
+      }
+
+      setStage('preview')
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : t('errors.analyzeFailed')
+      setError(message || t('errors.analyzeFailed'))
+      setStage('select')
+    }
+  }, [rawContent, saveProjectEpisodesBatchMutation, splitProjectEpisodesMutation, t])
+
+  const handleAnalyze = useCallback(async () => {
+    _ulogInfo('[SmartImport] handleAnalyze localized text')
+    _ulogInfo('[SmartImport] rawContent localized text:', rawContent.length)
+    _ulogInfo('[SmartImport] projectId:', projectId)
+
+    if (!rawContent.trim()) {
+      setError(t('errors.uploadFirst'))
+      return
+    }
+
+    const detection = detectEpisodeMarkers(rawContent)
+    _ulogInfo('[SmartImport] localized text:', {
+      hasMarkers: detection.hasMarkers,
+      markerType: detection.markerType,
+      confidence: detection.confidence,
+      matchCount: detection.matches.length,
+      previewSplitsCount: detection.previewSplits.length,
+    })
+
+    if (detection.hasMarkers) {
+      setMarkerResult(detection)
+      setShowMarkerConfirm(true)
+      return
+    }
+
+    _ulogInfo('[SmartImport] localized text，localized text AI localized text')
+    await performAISplit()
+  }, [performAISplit, projectId, rawContent, t])
+
+  // localized text，localized text（localized text）
+  const autoAnalyzeTriggered = useRef(false)
+  useEffect(() => {
+    if (initialRawContent && !autoAnalyzeTriggered.current && stage === 'select') {
+      autoAnalyzeTriggered.current = true
+      void handleAnalyze()
+    }
+  }) // eslint-disable-line react-hooks/exhaustive-deps
+
+
+  const handleMarkerSplit = useCallback(async () => {
+    if (!markerResult) return
+
+    setShowMarkerConfirm(false)
+    setStage('analyzing')
+    setError(null)
+
+    try {
+      const data = await splitProjectEpisodesByMarkersMutation.mutateAsync({ content: rawContent })
+      const splitEpisodes = data.episodes || []
+      setEpisodes(splitEpisodes)
+
+      let saveSucceeded = true
+      try {
+        await saveProjectEpisodesBatchMutation.mutateAsync({
+          episodes: splitEpisodes.map((ep: SplitEpisode) => ({
+            name: ep.title,
+            description: ep.summary,
+            novelText: ep.content,
+          })),
+          clearExisting: true,
+          importStatus: 'pending',
+        })
+      } catch {
+        saveSucceeded = false
+        _ulogWarn('[SmartImport] localized text，localized text')
+      }
+      if (saveSucceeded) {
+        _ulogInfo('[SmartImport] localized text')
+      }
+
+      setStage('preview')
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : t('errors.analyzeFailed')
+      setError(message || t('errors.analyzeFailed'))
+      setStage('select')
+    }
+  }, [markerResult, rawContent, saveProjectEpisodesBatchMutation, splitProjectEpisodesByMarkersMutation, t])
+
+  const updateEpisodeTitle = useCallback((index: number, title: string) => {
+    setEpisodes((prev) => prev.map((ep, i) => (i === index ? { ...ep, title } : ep)))
+  }, [])
+
+  const updateEpisodeSummary = useCallback((index: number, summary: string) => {
+    setEpisodes((prev) => prev.map((ep, i) => (i === index ? { ...ep, summary } : ep)))
+  }, [])
+
+  const updateEpisodeNumber = useCallback((index: number, number: number) => {
+    setEpisodes((prev) => prev.map((ep, i) => (i === index ? { ...ep, number } : ep)))
+  }, [])
+
+  const updateEpisodeContent = useCallback((index: number, content: string) => {
+    setEpisodes((prev) => prev.map((ep, i) => (i === index ? { ...ep, content, wordCount: countWords(content) } : ep)))
+  }, [])
+
+  const deleteEpisode = useCallback((index: number) => {
+    setEpisodes((prev) => {
+      if (prev.length <= 1) return prev
+      const next = prev.filter((_, i) => i !== index)
+      setSelectedEpisode((current) => (current >= next.length ? Math.max(0, next.length - 1) : current))
+      return next
+    })
+  }, [])
+
+  const addEpisode = useCallback(() => {
+    setEpisodes((prev) => {
+      const newEpisode: SplitEpisode = {
+        number: prev.length + 1,
+        title: `${t('preview.newEpisode')} ${prev.length + 1}`,
+        summary: '',
+        content: '',
+        wordCount: 0,
+      }
+      const next = [...prev, newEpisode]
+      setSelectedEpisode(next.length - 1)
+      return next
+    })
+  }, [t])
+
+  const openDeleteConfirm = useCallback((index: number, title: string) => {
+    setDeleteConfirm({ show: true, index, title })
+  }, [])
+
+  const closeDeleteConfirm = useCallback(() => {
+    setDeleteConfirm({ show: false, index: -1, title: '' })
+  }, [])
+
+  const confirmDeleteEpisode = useCallback(() => {
+    if (deleteConfirm.index >= 0) {
+      deleteEpisode(deleteConfirm.index)
+    }
+    closeDeleteConfirm()
+  }, [closeDeleteConfirm, deleteConfirm.index, deleteEpisode])
+
+  const handleConfirm = useCallback(async (triggerGlobalAnalysis = false) => {
+    setSaving(true)
+    setError(null)
+
+    try {
+      await saveProjectEpisodesBatchMutation.mutateAsync({
+        episodes: episodes.map((ep) => ({
+          name: ep.title,
+          description: ep.summary,
+          novelText: ep.content,
+        })),
+        clearExisting: true,
+        importStatus: 'completed',
+        triggerGlobalAnalysis,
+      })
+
+      _ulogInfo('[SmartImport] localized text，localized text：completed, localized text:', triggerGlobalAnalysis)
+      onImportComplete(episodes, triggerGlobalAnalysis)
+    } catch (err: unknown) {
+      _ulogError('[SmartImport] localized text:', err)
+      const message = err instanceof Error ? err.message : t('errors.saveFailed')
+      setError(message || t('errors.saveFailed'))
+    } finally {
+      setSaving(false)
+    }
+  }, [episodes, onImportComplete, saveProjectEpisodesBatchMutation, t])
+
+  return {
+    stage,
+    setStage,
+    rawContent,
+    setRawContent,
+    episodes,
+    selectedEpisode,
+    setSelectedEpisode,
+    error,
+    saving,
+    markerResult,
+    showMarkerConfirm,
+    deleteConfirm,
+    handleAnalyze,
+    performAISplit,
+    handleMarkerSplit,
+    setShowMarkerConfirm,
+    setMarkerResult,
+    updateEpisodeTitle,
+    updateEpisodeSummary,
+    updateEpisodeNumber,
+    updateEpisodeContent,
+    addEpisode,
+    openDeleteConfirm,
+    closeDeleteConfirm,
+    confirmDeleteEpisode,
+    handleConfirm,
+  }
+}

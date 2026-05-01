@@ -1,0 +1,53 @@
+# localized text
+.git
+.github
+
+# localized text（builder localized text）
+.next
+node_modules
+
+# test
+coverage
+tests
+vitest.config.ts
+docker-compose.test.yml
+
+# localized text
+logs
+data
+certificates
+backups
+uploads
+
+# IDE localized text AI localized text
+.vscode
+.cursor
+.claude
+.gemini
+.agent
+.shared
+.artifacts
+
+# localized text
+*.db
+*.db-journal
+prisma/data
+
+# localized text
+.DS_Store
+*.tsbuildinfo
+.tmp-old-snapshot-*
+
+# localized text
+.env
+.env.local
+.env.*.local
+.env.test
+
+# localized text
+*.md
+*.py
+debug-request.json
+AGENTS.md
+docs
+agent

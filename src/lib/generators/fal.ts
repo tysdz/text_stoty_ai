@@ -1,0 +1,314 @@
+import { createScopedLogger, logError as _ulogError } from '@/lib/logging/core'
+/**
+ * FAL localized text（localized text + localized text）
+ * 
+ * localized text：
+ * - Banana Pro (2K/4K) - fal-ai/nano-banana-pro       (modelId: 'banana')
+ * - Banana 2  (1K/2K/4K) - fal-ai/nano-banana-2       (modelId: 'banana-2')
+ * 
+ * localized text：
+ * - Wan 2.6 (fal-wan25) - wan/v2.6/image-to-video
+ * - Veo 3.1 (fal-veo31) - fal-ai/veo3.1/fast/image-to-video
+ * - Sora 2 (fal-sora2) - fal-ai/sora-2/image-to-video  
+ * - Kling 2.5 Turbo Pro - fal-ai/kling-video/v2.5-turbo/pro/image-to-video
+ * - Kling 3 Standard - fal-ai/kling-video/v3/standard/image-to-video
+ * - Kling 3 Pro - fal-ai/kling-video/v3/pro/image-to-video
+ */
+
+import {
+    BaseImageGenerator,
+    BaseVideoGenerator,
+    ImageGenerateParams,
+    VideoGenerateParams,
+    GenerateResult
+} from './base'
+import { getProviderConfig } from '@/lib/api-config'
+import { submitFalTask } from '@/lib/async-submit'
+import { normalizeToBase64ForGeneration } from '@/lib/media/outbound-image'
+import { buildFalQueueUrl } from '@/lib/providers/fal/base-url'
+
+// ============================================================
+// localized text（modelId → FAL localized text）
+// ============================================================
+
+const FAL_IMAGE_ENDPOINTS: Record<string, { base: string; edit: string }> = {
+    'banana': { base: 'fal-ai/nano-banana-pro', edit: 'fal-ai/nano-banana-pro/edit' },
+    'banana-2': { base: 'fal-ai/nano-banana-2', edit: 'fal-ai/nano-banana-2/edit' },
+}
+
+// ============================================================
+// localized text
+// ============================================================
+
+const FAL_VIDEO_ENDPOINTS: Record<string, string> = {
+    'fal-wan25': 'wan/v2.6/image-to-video',
+    'fal-veo31': 'fal-ai/veo3.1/fast/image-to-video',
+    'fal-sora2': 'fal-ai/sora-2/image-to-video',
+    'fal-ai/kling-video/v2.5-turbo/pro/image-to-video': 'fal-ai/kling-video/v2.5-turbo/pro/image-to-video',
+    'fal-ai/kling-video/v3/standard/image-to-video': 'fal-ai/kling-video/v3/standard/image-to-video',
+    'fal-ai/kling-video/v3/pro/image-to-video': 'fal-ai/kling-video/v3/pro/image-to-video',
+}
+
+// ============================================================
+// FAL localized text (Banana Pro / Banana 2)
+// ============================================================
+
+export class FalImageGenerator extends BaseImageGenerator {
+    protected async doGenerate(params: ImageGenerateParams): Promise<GenerateResult> {
+        const { userId, prompt, referenceImages = [], options = {} } = params
+
+        const { apiKey } = await getProviderConfig(userId, 'fal')
+        const {
+            aspectRatio,
+            resolution,
+            outputFormat = 'png',
+            modelId: optModelId = 'banana'
+        } = options as {
+            aspectRatio?: string
+            resolution?: string
+            outputFormat?: string
+            provider?: string
+            modelId?: string
+            modelKey?: string
+        }
+
+        const allowedOptionKeys = new Set([
+            'provider',
+            'modelId',
+            'modelKey',
+            'aspectRatio',
+            'resolution',
+            'outputFormat',
+        ])
+        for (const [key, value] of Object.entries(options)) {
+            if (value === undefined) continue
+            if (!allowedOptionKeys.has(key)) {
+                throw new Error(`FAL_IMAGE_OPTION_UNSUPPORTED: ${key}`)
+            }
+        }
+        if (resolution !== undefined && resolution !== '1K' && resolution !== '2K' && resolution !== '4K') {
+            throw new Error(`FAL_IMAGE_OPTION_VALUE_UNSUPPORTED: resolution=${resolution}`)
+        }
+
+        // localized text modelId localized text
+        const hasReferenceImages = referenceImages.length > 0
+        const endpointConfig = FAL_IMAGE_ENDPOINTS[optModelId] || FAL_IMAGE_ENDPOINTS['banana']
+        const endpoint = hasReferenceImages ? endpointConfig.edit : endpointConfig.base
+
+        const logger = createScopedLogger({
+            module: 'worker.fal-image',
+            action: 'fal_image_generate',
+        })
+        logger.info({
+            message: 'FAL image generation request',
+            details: {
+                modelId: optModelId,
+                endpoint,
+                referenceImagesCount: referenceImages.length,
+                hasReferenceImages,
+                resolution: resolution ?? null,
+                aspectRatio: aspectRatio ?? null,
+                referenceImageUrls: referenceImages.map((u: string) => u.substring(0, 100)),
+            },
+        })
+
+        const body: Record<string, unknown> = {
+            prompt,
+            num_images: 1,
+            output_format: outputFormat
+        }
+        if (aspectRatio) {
+            body.aspect_ratio = aspectRatio
+        }
+        if (resolution) {
+            body.resolution = resolution
+        }
+
+        if (hasReferenceImages) {
+            // 🔥 localized textData URL（localized text/localized text）
+            const dataUrls = await Promise.all(
+                referenceImages.map(async (url: string) => {
+                    // localized textdata URL，localized text
+                    if (url.startsWith('data:')) return url
+                    // localized textData URL
+                    return await normalizeToBase64ForGeneration(url)
+                })
+            )
+            body.image_urls = dataUrls
+            logger.info({
+                message: 'FAL image reference images converted',
+                details: {
+                    count: referenceImages.length,
+                    sizes: dataUrls.map((d: string) => `${Math.round(d.length / 1024)}KB`),
+                },
+            })
+        }
+
+        logger.info({
+            message: 'FAL image request body summary',
+            details: {
+                url: buildFalQueueUrl(endpoint),
+                promptLength: prompt.length,
+                imageUrlsCount: hasReferenceImages ? (body.image_urls as string[]).length : 0,
+                resolution: body.resolution ?? null,
+                aspectRatio: body.aspect_ratio ?? null,
+                outputFormat: body.output_format,
+            },
+        })
+
+        // localized text
+        const submitResponse = await fetch(buildFalQueueUrl(endpoint), {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Key ${apiKey}`
+            },
+            body: JSON.stringify(body),
+            cache: 'no-store'
+        })
+
+        if (!submitResponse.ok) {
+            const errorText = await submitResponse.text()
+            throw new Error(`FAL localized text (${submitResponse.status}): ${errorText}`)
+        }
+
+        const submitData = await submitResponse.json()
+        const requestId = submitData.request_id
+
+        if (!requestId) {
+            throw new Error('FAL localized text request_id')
+        }
+
+        return {
+            success: true,
+            async: true,
+            requestId,        // localized text
+            endpoint,         // localized text
+            externalId: `FAL:IMAGE:${endpoint}:${requestId}`  // 🔥 localized text
+        }
+    }
+}
+
+// ============================================================
+// FAL localized text (Wan 2.6, Veo 3.1, Sora 2, Kling)
+// ============================================================
+
+export class FalVideoGenerator extends BaseVideoGenerator {
+    protected async doGenerate(params: VideoGenerateParams): Promise<GenerateResult> {
+        const { userId, imageUrl, prompt = '', options = {} } = params
+
+        const { apiKey } = await getProviderConfig(userId, 'fal')
+        const {
+            duration,
+            resolution,
+            aspectRatio,
+            modelId = 'fal-wan25'
+        } = options as {
+            duration?: number
+            resolution?: string
+            aspectRatio?: string
+            modelId?: string
+            provider?: string
+            modelKey?: string
+        }
+
+        const allowedOptionKeys = new Set([
+            'provider',
+            'modelId',
+            'modelKey',
+            'duration',
+            'resolution',
+            'aspectRatio',
+        ])
+        for (const [key, value] of Object.entries(options)) {
+            if (value === undefined) continue
+            if (!allowedOptionKeys.has(key)) {
+                throw new Error(`FAL_VIDEO_OPTION_UNSUPPORTED: ${key}`)
+            }
+        }
+
+        // localized text
+        const endpoint = FAL_VIDEO_ENDPOINTS[modelId]
+        if (!endpoint) {
+            throw new Error(`FAL_VIDEO_MODEL_UNSUPPORTED: ${modelId}`)
+        }
+        const vLogger = createScopedLogger({ module: 'worker.fal-video', action: 'fal_video_generate' })
+        vLogger.info({ message: 'FAL video generation request', details: { modelId, endpoint } })
+
+        // localized text
+        let input: Record<string, unknown>
+
+        switch (modelId) {
+            case 'fal-wan25':
+                input = {
+                    image_url: imageUrl,
+                    prompt,
+                    ...(resolution ? { resolution } : {}),
+                    ...(typeof duration === 'number' ? { duration: String(duration) } : {})
+                }
+                break
+            case 'fal-veo31':
+                input = {
+                    image_url: imageUrl,
+                    prompt,
+                    ...(aspectRatio ? { aspect_ratio: aspectRatio } : {}),
+                    ...(typeof duration === 'number' ? { duration: `${duration}s` } : {}),
+                    generate_audio: false
+                }
+                break
+            case 'fal-sora2':
+                input = {
+                    image_url: imageUrl,
+                    prompt,
+                    ...(aspectRatio ? { aspect_ratio: aspectRatio } : {}),
+                    ...(typeof duration === 'number' ? { duration } : {}),
+                    delete_video: false
+                }
+                break
+            case 'fal-ai/kling-video/v2.5-turbo/pro/image-to-video':
+                input = {
+                    image_url: imageUrl,
+                    prompt,
+                    ...(typeof duration === 'number' ? { duration: String(duration) } : {}),
+                    negative_prompt: 'blur, distort, and low quality',
+                    cfg_scale: 0.5
+                }
+                break
+            case 'fal-ai/kling-video/v3/standard/image-to-video':
+            case 'fal-ai/kling-video/v3/pro/image-to-video':
+                input = {
+                    start_image_url: imageUrl,
+                    prompt,
+                    ...(aspectRatio ? { aspect_ratio: aspectRatio } : {}),
+                    ...(typeof duration === 'number' ? { duration: String(duration) } : {}),
+                    generate_audio: false,
+                }
+                break
+            default:
+                throw new Error(`FAL_VIDEO_MODEL_UNSUPPORTED: ${modelId}`)
+        }
+
+        try {
+            const requestId = await submitFalTask(endpoint, input, apiKey)
+            vLogger.info({ message: 'FAL video task submitted', details: { requestId } })
+
+            return {
+                success: true,
+                async: true,
+                requestId,  // localized text
+                endpoint,   // localized text  
+                externalId: `FAL:VIDEO:${endpoint}:${requestId}`  // 🔥 localized text
+            }
+        } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : 'localized text'
+            _ulogError(`[FAL Video] localized text:`, message)
+            throw new Error(`FAL localized text: ${message}`)
+        }
+    }
+}
+
+// ============================================================
+// localized text
+// ============================================================
+
+export const FalBananaGenerator = FalImageGenerator

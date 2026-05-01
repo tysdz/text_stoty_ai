@@ -1,0 +1,20 @@
+# HTTPS localized text（localized text，localized text Docker localized text）
+# localized text: caddy run --config Caddyfile
+#
+# localized text:
+#   1. docker compose up -d    (localized text App + MySQL + Redis)
+#   2. caddy run --config Caddyfile  (localized text HTTPS localized text)
+#   3. localized text https://localhost:4443 localized text https://your-ip:4443
+#
+# localized text IP localized text IP（ifconfig en0 localized text）
+# localized text: localhost:1443, https://192.168.x.x:1443 {
+
+localhost:1443 {
+    handle /admin/queues* {
+        reverse_proxy localhost:13010
+    }
+    handle {
+        reverse_proxy localhost:13000
+    }
+    tls internal
+}
